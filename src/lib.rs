@@ -6,18 +6,22 @@ use alloc::borrow::{Cow, ToOwned};
 
 mod private {
     pub trait Sealed {}
-}
-use private::Sealed;
 
-pub trait Rewritable: ToOwned + Sealed {
-    type Info: Default;
+    pub trait WithInfo {
+        type Info: Default;
+    }
+}
+use private::{Sealed, WithInfo};
+
+pub trait Rewritable: AsRef<Self::Ref> + Sealed {
+    type Ref: ToOwned + WithInfo + ?Sized;
 }
 
-pub struct Rewrite<'a, T: Rewritable + ?Sized> {
-    input: Cow<'a, T>,
-    output: T::Owned,
+pub struct Rewrite<T: Rewritable> {
+    input: T,
+    output: <T::Ref as ToOwned>::Owned,
     copied: bool,
-    index: T::Info,
+    info: <T::Ref as WithInfo>::Info,
 }
 
 /// Check that bytes `a` contains bytes `b` at offset `i`
@@ -35,40 +39,52 @@ fn is_char_at(s: &str, i: usize, c: char) -> bool {
     is_bytes_at(s.as_bytes(), i, d)
 }
 
-impl Sealed for str {}
-impl Rewritable for str {
+impl WithInfo for str {
     type Info = usize;
 }
 
-impl<'a, T: Rewritable<Owned: Default> + ?Sized> Rewrite<'a, T> {
-    pub fn new(input: Cow<'a, T>) -> Self {
+impl<'a> Sealed for &'a str {}
+impl<'a> Rewritable for &'a str {
+    type Ref = str;
+}
+
+impl<'a> Sealed for Cow<'a, str> {}
+impl<'a> Rewritable for Cow<'a, str> {
+    type Ref = str;
+}
+
+impl<T: Rewritable> Rewrite<T>
+where
+    <T::Ref as ToOwned>::Owned: Default,
+{
+    pub fn new(input: T) -> Self {
         Self {
             input,
-            output: T::Owned::default(),
+            output: Default::default(),
             copied: false,
-            index: T::Info::default(),
+            info: Default::default(),
         }
     }
 }
 
-impl<'a> Rewrite<'a, str> {
+impl<T: Rewritable<Ref = str>> Rewrite<T> {
     fn copy(&mut self) {
         if !self.copied {
-            self.output.push_str(&self.input[0..self.index]);
+            self.output.push_str(&self.input.as_ref()[0..self.info]);
             self.copied = true;
         }
     }
     pub fn push(&mut self, c: char) {
-        if !self.copied && is_char_at(&self.input, self.index, c) {
-            self.index += c.len_utf8();
+        if !self.copied && is_char_at(self.input.as_ref(), self.info, c) {
+            self.info += c.len_utf8();
         } else {
             self.copy();
             self.output.push(c);
         }
     }
     pub fn push_str(&mut self, s: &str) {
-        if !self.copied && is_bytes_at(self.input.as_bytes(), self.index, s.as_bytes()) {
-            self.index += s.len();
+        if !self.copied && is_bytes_at(self.input.as_ref().as_bytes(), self.info, s.as_bytes()) {
+            self.info += s.len();
         } else {
             self.copy();
             self.output.push_str(s);
@@ -76,15 +92,25 @@ impl<'a> Rewrite<'a, str> {
     }
 }
 
-impl<'a> From<Rewrite<'a, str>> for Cow<'a, str> {
-    fn from(this: Rewrite<'a, str>) -> Self {
+impl<'a> From<Rewrite<&'a str>> for Cow<'a, str> {
+    fn from(this: Rewrite<&'a str>) -> Self {
+        if this.copied {
+            Cow::Owned(this.output)
+        } else {
+            Cow::Borrowed(&this.input[0..this.info])
+        }
+    }
+}
+
+impl<'a> From<Rewrite<Cow<'a, str>>> for Cow<'a, str> {
+    fn from(this: Rewrite<Cow<'a, str>>) -> Self {
         if this.copied {
             Cow::Owned(this.output)
         } else {
             match this.input {
-                Cow::Borrowed(s) => Cow::Borrowed(&s[0..this.index]),
+                Cow::Borrowed(s) => Cow::Borrowed(&s[0..this.info]),
                 Cow::Owned(mut s) => {
-                    s.truncate(this.index);
+                    s.truncate(this.info);
                     Cow::Owned(s)
                 }
             }
@@ -99,7 +125,7 @@ mod tests {
     #[test]
     fn str_write_same() {
         let s = "abc";
-        let mut r = Rewrite::new(Cow::Borrowed(s));
+        let mut r = Rewrite::new(s);
         r.push('a');
         r.push_str("bc");
         let d: Cow<str> = r.into();
@@ -109,7 +135,7 @@ mod tests {
     #[test]
     fn str_write_less() {
         let s = "abc";
-        let mut r = Rewrite::new(Cow::Borrowed(s));
+        let mut r = Rewrite::new(s);
         r.push('a');
         r.push_str("b");
         let d: Cow<str> = r.into();
@@ -119,7 +145,7 @@ mod tests {
     #[test]
     fn str_write_more() {
         let s = "abc";
-        let mut r = Rewrite::new(Cow::Borrowed(s));
+        let mut r = Rewrite::new(s);
         r.push('a');
         r.push_str("bcd");
         let d: Cow<str> = r.into();
@@ -129,7 +155,7 @@ mod tests {
     #[test]
     fn str_write_different() {
         let s = "abc";
-        let mut r = Rewrite::new(Cow::Borrowed(s));
+        let mut r = Rewrite::new(s);
         r.push('a');
         r.push_str("bd");
         let d: Cow<str> = r.into();
