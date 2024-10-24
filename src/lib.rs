@@ -2,7 +2,10 @@
 
 extern crate alloc;
 
-use alloc::borrow::{Cow, ToOwned};
+use alloc::{
+    borrow::{Cow, ToOwned},
+    string::String,
+};
 
 mod private {
     pub trait Sealed {}
@@ -48,8 +51,18 @@ impl<'a> Rewritable for &'a str {
     type Ref = str;
 }
 
+impl Sealed for String {}
+impl Rewritable for String {
+    type Ref = str;
+}
+
 impl<'a> Sealed for Cow<'a, str> {}
 impl<'a> Rewritable for Cow<'a, str> {
+    type Ref = str;
+}
+
+impl<'a, 'b> Sealed for &'b Cow<'a, str> {}
+impl<'a, 'b> Rewritable for &'b Cow<'a, str> {
     type Ref = str;
 }
 
@@ -102,6 +115,18 @@ impl<'a> From<Rewrite<&'a str>> for Cow<'a, str> {
     }
 }
 
+impl From<Rewrite<String>> for String {
+    fn from(this: Rewrite<String>) -> Self {
+        if this.copied {
+            this.output
+        } else {
+            let mut s = this.input;
+            s.truncate(this.info);
+            s
+        }
+    }
+}
+
 impl<'a> From<Rewrite<Cow<'a, str>>> for Cow<'a, str> {
     fn from(this: Rewrite<Cow<'a, str>>) -> Self {
         if this.copied {
@@ -112,6 +137,23 @@ impl<'a> From<Rewrite<Cow<'a, str>>> for Cow<'a, str> {
                 Cow::Owned(mut s) => {
                     s.truncate(this.info);
                     Cow::Owned(s)
+                }
+            }
+        }
+    }
+}
+
+impl<'a, 'b> From<Rewrite<&'b Cow<'a, str>>> for Cow<'a, str> {
+    fn from(this: Rewrite<&'b Cow<'a, str>>) -> Self {
+        if this.copied {
+            Cow::Owned(this.output)
+        } else {
+            match this.input {
+                Cow::Borrowed(s) => Cow::Borrowed(&s[0..this.info]),
+                Cow::Owned(s) => {
+                    let mut d = String::with_capacity(this.info);
+                    d.push_str(&s[0..this.info]);
+                    Cow::Owned(d)
                 }
             }
         }
