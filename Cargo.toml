@@ -1,0 +1,13 @@
+[package]
+name = "cow-rewrite"
+version = "0.1.0"
+authors = ["Alexey Gerasev <alexey.gerasev@gmail.com>"]
+description = "Rewrite copy-on-write types copying only when it's neccessary"
+homepage = "https://github.com/agerasev/cow-rewrite"
+repository = "https://github.com/agerasev/cow-rewrite"
+keywords = ["rewrite", "cow"]
+categories = ["data-structures", "text-processing"]
+license = "MIT"
+edition = "2021"
+
+[dependencies]
